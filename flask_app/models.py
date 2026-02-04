@@ -1,5 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.dialects.postgresql import GEOGRAPHY
+from geoalchemy2 import Geography
 
 db = SQLAlchemy()
 
@@ -7,7 +7,7 @@ class AnalysisRequest(db.Model):
     __tablename__ = 'analysis_requests'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255))
-    geometry = db.Column(GEOGRAPHY(srid=4326, geometry_type='POLYGON'))
+    geometry = db.Column(Geography(geometry_type='POLYGON', srid=4326))  # Используем Geography из geoalchemy2
     date_from = db.Column(db.Date)
     date_to = db.Column(db.Date)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
