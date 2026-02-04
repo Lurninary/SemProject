@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Анализ влажности почвы</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+    <div class="container">
+        <h1>Анализ влажности почвы по спутниковым снимкам</h1>
+
+        <div class="layout">
+            <div class="map-container">
+                <div id="map"></div>
+                <button onclick="drawRectangle()">Нарисовать область</button>
+                <button onclick="clearDrawing()">Очистить</button>
+            </div>
+
+            <div class="form-container">
+                <h3>Параметры анализа</h3>
+                <form id="analysisForm">
+                    <input type="text" id="name" placeholder="Название анализа" required>
+                    <textarea id="geometry" placeholder="Геометрия (WKT)" readonly required></textarea>
+                    <label for="date_from">Дата начала:</label>
+                    <input type="date" id="date_from" required>
+                    <label for="date_to">Дата окончания:</label>
+                    <input type="date" id="date_to" required>
+                    <button type="submit">Запустить анализ</button>
+                </form>
+
+                <div id="results" class="hidden">
+                    <h3>Результаты</h3>
+                    <p>Статус: <span id="status">-</span></p>
+                    <p>Влажность почвы: <span id="moisture">-</span>%</p>
+                    <img id="resultImage" src="" alt="Результат">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/terra-draw@0.1.1"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
