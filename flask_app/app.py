@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify
-from models import db, AnalysisRequest, AnalysisResult
+from models import db, AnalysisRequest
 import os
 import requests
 from datetime import datetime
@@ -11,65 +11,68 @@ FASTAPI_URL = os.getenv('FASTAPI_URL', 'http://fastapi_app:8000')
 
 db.init_app(app)
 
+
 @app.route('/')
 def index():
     """Главная страница с картой и формой."""
     return render_template('index.html')
 
+
 @app.route('/api/submit_analysis', methods=['POST'])
 def submit_analysis():
-    """Принимает данные с формы и создает задачу на анализ."""
+    """Принимает данные с формы, создает запрос в БД и отправляет задачу в FastAPI."""
     try:
         data = request.json
         new_request = AnalysisRequest(
             name=data.get('name', 'Unnamed Request'),
-            geometry=data.get('geometry', 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),
-            date_from=datetime.strptime(data.get('date_from', '2023-01-01'), '%Y-%m-%d').date(),
-            date_to=datetime.strptime(data.get('date_to', '2023-12-31'), '%Y-%m-%d').date()
+            geometry=data.get('geometry'),
+            date_from=datetime.strptime(data.get('date_from'), '%Y-%m-%d').date(),
+            date_to=datetime.strptime(data.get('date_to'), '%Y-%m-%d').date()
         )
         db.session.add(new_request)
         db.session.commit()
 
-        result = AnalysisResult(
-            request_id=new_request.id,
-            acquisition_date=datetime.now().date(),
-            mean_ndwi=0.15,
-            mean_soil_moisture=25.5,
-            image_url="https://via.placeholder.com/300x200?text=Satellite+Image"
-        )
-        db.session.add(result)
-        new_request.status = 'completed'
-        db.session.commit()
+        payload = {
+            "request_id": new_request.id,
+            "geometry": data['geometry'],
+            "date_from": data['date_from'],
+            "date_to": data['date_to']
+        }
+        fastapi_resp = requests.post(f"{FASTAPI_URL}/api/process", json=payload)
+        if fastapi_resp.status_code != 200:
+            new_request.status = 'failed'
+            db.session.commit()
+            return jsonify({"error": "Failed to start analysis in backend"}), 500
 
         return jsonify({
-            "message": "Analysis completed (demo mode)",
-            "id": new_request.id,
-            "results": {
-                "mean_ndwi": result.mean_ndwi,
-                "mean_soil_moisture": result.mean_soil_moisture,
-                "image_url": result.image_url
-            }
-        }), 200
+            "message": "Analysis started",
+            "id": new_request.id
+        }), 202
 
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 400
 
 @app.route('/api/results/<int:request_id>')
 def get_results(request_id):
-    """Получает результаты анализа по ID запроса."""
-    result = AnalysisResult.query.filter_by(request_id=request_id).first()
-    if result:
+    """Получает результаты анализа из БД (данные уже должны быть сохранены FastAPI)."""
+    from models import AnalysisResult
+    results = AnalysisResult.query.filter_by(request_id=request_id).all()
+    if results:
+        avg_moisture = sum(r.mean_soil_moisture for r in results) / len(results)
         return jsonify({
             "status": "completed",
-            "results": {
-                "mean_ndwi": result.mean_ndwi,
-                "mean_soil_moisture": result.mean_soil_moisture,
-                "image_url": result.image_url,
-                "acquisition_date": str(result.acquisition_date)
-            }
+            "mean_soil_moisture": round(avg_moisture, 2),
+            "details": [{"date": str(r.acquisition_date), "moisture": r.mean_soil_moisture} for r in results]
         })
     else:
-        return jsonify({"error": "Results not found"}), 404
+        req = AnalysisRequest.query.get(request_id)
+        if req and req.status == 'processing':
+            return jsonify({"status": "processing"}), 202
+        elif req and req.status == 'failed':
+            return jsonify({"status": "failed", "error": "Analysis failed"}), 500
+        else:
+            return jsonify({"error": "Results not found"}), 404
 
 @app.route('/api/requests')
 def list_requests():

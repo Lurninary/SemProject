@@ -4,7 +4,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -35,10 +35,10 @@ services:
       - "8000"
     environment:
       - DATABASE_URL=postgresql://soil_user:soil_pass@postgres_db:5432/soil_db
-      - SENTINEL_HUB_CLIENT_ID=${SENTINEL_HUB_CLIENT_ID:-demo}
-      - SENTINEL_HUB_CLIENT_SECRET=${SENTINEL_HUB_CLIENT_SECRET:-demo}
+      - GEE_KEY_PATH=/secrets/gee_service_account.json
     volumes:
       - ./fastapi_app:/app
+      - ./secrets/gee_service_account.json:/secrets/gee_service_account.json:ro
     depends_on:
       - postgres_db
     networks:
