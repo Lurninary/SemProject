@@ -438,6 +438,21 @@ async function pollHistoryResult(requestId) {
     }, 3000);
 }
 
+async function zoomToHistoryAnalysis(requestId) {
+    try {
+        const res = await fetch(`/api/requests/${requestId}/bounds`);
+        if (!res.ok) return;
+        const b = await res.json();
+        map.fitBounds(
+            [[b.south, b.west], [b.north, b.east]],
+            { padding: [24, 24], maxZoom: 14 }
+        );
+    } catch (err) {
+        console.warn("zoom history analysis error", err);
+    }
+}
+
 function selectHistory(requestId) {
+    zoomToHistoryAnalysis(requestId);
     pollHistoryResult(requestId);
 }

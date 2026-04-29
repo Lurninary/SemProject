@@ -3,7 +3,8 @@ from models import db, AnalysisRequest
 import os
 import requests
 from datetime import datetime
-from sqlalchemy import text
+from sqlalchemy import func, cast
+from geoalchemy2 import Geometry
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
@@ -11,19 +12,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 FASTAPI_URL = os.getenv('FASTAPI_URL', 'http://fastapi_app:8000')
 
 db.init_app(app)
-
-
-def ensure_geometry_column_supports_multipolygon():
-    """
-    Ensure existing DBs accept both POLYGON and MULTIPOLYGON geometries.
-    """
-    db.session.execute(text("""
-        ALTER TABLE analysis_requests
-        ALTER COLUMN geometry
-        TYPE geography(GEOMETRY, 4326)
-        USING geometry::geometry::geography
-    """))
-    db.session.commit()
 
 
 @app.route('/')
@@ -103,8 +91,36 @@ def list_requests():
         "created_at": str(r.created_at)
     } for r in requests_list])
 
+
+@app.route('/api/requests/<int:request_id>/bounds')
+def request_bounds(request_id):
+    """
+    Bounding box of saved request geometry for map zoom.
+    Returns {south, west, north, east}.
+    """
+    row = (
+        db.session.query(
+            func.ST_YMin(cast(AnalysisRequest.geometry, Geometry)).label("south"),
+            func.ST_XMin(cast(AnalysisRequest.geometry, Geometry)).label("west"),
+            func.ST_YMax(cast(AnalysisRequest.geometry, Geometry)).label("north"),
+            func.ST_XMax(cast(AnalysisRequest.geometry, Geometry)).label("east"),
+        )
+        .filter(AnalysisRequest.id == request_id)
+        .first()
+    )
+
+    if not row or row.south is None:
+        return jsonify({"error": "Geometry not found"}), 404
+
+    return jsonify({
+        "request_id": request_id,
+        "south": float(row.south),
+        "west": float(row.west),
+        "north": float(row.north),
+        "east": float(row.east),
+    })
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-        ensure_geometry_column_supports_multipolygon()
     app.run(host='0.0.0.0', port=5000, debug=True)
