@@ -4,45 +4,160 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> & CartoDB'
 }).addTo(map);
 
-let drawnRectangle = null;
-let currentBounds = null;
+const gridLayer = L.layerGroup().addTo(map);
+let selectedCellPoints = [];
+
+function getGridSizePixels(zoom) {
+    if (zoom >= 14) return 70;
+    if (zoom >= 12) return 84;
+    if (zoom >= 10) return 100;
+    if (zoom >= 8) return 120;
+    return 144;
+}
+
+function getCellForLatLng(lat, lng, zoomOverride = null) {
+    const zoom = zoomOverride ?? map.getZoom();
+    const sizePx = getGridSizePixels(zoom);
+    const p = map.project([lat, lng], zoom);
+    const ix = Math.floor(p.x / sizePx);
+    const iy = Math.floor(p.y / sizePx);
+
+    const minPoint = L.point(ix * sizePx, iy * sizePx);
+    const maxPoint = L.point((ix + 1) * sizePx, (iy + 1) * sizePx);
+
+    const nw = map.unproject(minPoint, zoom);
+    const se = map.unproject(maxPoint, zoom);
+
+    return {
+        key: `${zoom}:${ix}:${iy}`,
+        ix,
+        iy,
+        zoom,
+        minLat: se.lat,
+        minLng: nw.lng,
+        maxLat: nw.lat,
+        maxLng: se.lng,
+        center: map.unproject(L.point((ix + 0.5) * sizePx, (iy + 0.5) * sizePx), zoom),
+    };
+}
+
+function buildCellsFromSelectedPoints() {
+    const byKey = new Map();
+    selectedCellPoints.forEach((p) => {
+        const cell = getCellForLatLng(p.lat, p.lng);
+        byKey.set(cell.key, cell);
+    });
+    return byKey;
+}
+
+function updateGeometryFieldFromSelection() {
+    const cells = Array.from(buildCellsFromSelectedPoints().values())
+        .sort((a, b) => (a.minLat - b.minLat) || (a.minLng - b.minLng));
+
+    if (!cells.length) {
+        document.getElementById('geometry').value = '';
+        return;
+    }
+
+    const polygonWkts = cells.map((cell) =>
+        `((${cell.minLng} ${cell.minLat}, ${cell.maxLng} ${cell.minLat}, ${cell.maxLng} ${cell.maxLat}, ${cell.minLng} ${cell.maxLat}, ${cell.minLng} ${cell.minLat}))`
+    );
+
+    if (polygonWkts.length === 1) {
+        document.getElementById('geometry').value = `POLYGON${polygonWkts[0]}`;
+    } else {
+        document.getElementById('geometry').value = `MULTIPOLYGON(${polygonWkts.join(',')})`;
+    }
+}
+
+function toggleCellSelection(cell) {
+    const currentKey = cell.key;
+    const hasCell = selectedCellPoints.some((p) => getCellForLatLng(p.lat, p.lng).key === currentKey);
+
+    if (hasCell) {
+        selectedCellPoints = selectedCellPoints.filter((p) => getCellForLatLng(p.lat, p.lng).key !== currentKey);
+    } else {
+        selectedCellPoints.push({ lat: cell.center.lat, lng: cell.center.lng });
+    }
+
+    updateGeometryFieldFromSelection();
+    drawGrid();
+}
+
+function drawGrid() {
+    gridLayer.clearLayers();
+
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+    const sizePx = getGridSizePixels(zoom);
+
+    const nwPoint = map.project(bounds.getNorthWest(), zoom);
+    const sePoint = map.project(bounds.getSouthEast(), zoom);
+
+    const minIx = Math.floor(nwPoint.x / sizePx) - 1;
+    const maxIx = Math.ceil(sePoint.x / sizePx) + 1;
+    const minIy = Math.floor(nwPoint.y / sizePx) - 1;
+    const maxIy = Math.ceil(sePoint.y / sizePx) + 1;
+
+    const selectedCells = buildCellsFromSelectedPoints();
+
+    for (let ix = minIx; ix <= maxIx; ix += 1) {
+        for (let iy = minIy; iy <= maxIy; iy += 1) {
+            const minPoint = L.point(ix * sizePx, iy * sizePx);
+            const maxPoint = L.point((ix + 1) * sizePx, (iy + 1) * sizePx);
+            const nw = map.unproject(minPoint, zoom);
+            const se = map.unproject(maxPoint, zoom);
+            const cell = {
+                key: `${zoom}:${ix}:${iy}`,
+                ix,
+                iy,
+                zoom,
+                minLat: se.lat,
+                minLng: nw.lng,
+                maxLat: nw.lat,
+                maxLng: se.lng,
+                center: map.unproject(L.point((ix + 0.5) * sizePx, (iy + 0.5) * sizePx), zoom),
+            };
+
+            const isSelected = selectedCells.has(cell.key);
+            const rect = L.rectangle(
+                [[cell.minLat, cell.minLng], [cell.maxLat, cell.maxLng]],
+                isSelected
+                    ? { color: "#ff7800", weight: 2, fillColor: "#ffb74d", fillOpacity: 0.28, opacity: 1 }
+                    : { color: "#7aa87a", weight: 1, fillOpacity: 0, opacity: 0.55 }
+            );
+
+            rect.on("click", () => toggleCellSelection(cell));
+            rect.addTo(gridLayer);
+        }
+    }
+}
 
 function drawRectangle() {
-    if (drawnRectangle) map.removeLayer(drawnRectangle);
-    const bounds = map.getBounds();
-    const sw = bounds.getSouthWest();
-    const ne = bounds.getNorthEast();
-    // Отступ 10% от границ, чтобы прямоугольник был чуть меньше видимой области
-    const pad = 0.08;
-    const latPad = (ne.lat - sw.lat) * pad;
-    const lngPad = (ne.lng - sw.lng) * pad;
-    const newSw = [sw.lat + latPad, sw.lng + lngPad];
-    const newNe = [ne.lat - latPad, ne.lng - lngPad];
-    drawnRectangle = L.rectangle([newSw, newNe], { color: "#ff7800", weight: 3, opacity: 0.8 }).addTo(map);
-    updateGeometryField(newSw, newNe);
+    const center = map.getCenter();
+    const centerCell = getCellForLatLng(center.lat, center.lng);
+    const exists = selectedCellPoints.some((p) => getCellForLatLng(p.lat, p.lng).key === centerCell.key);
+    if (!exists) {
+        selectedCellPoints.push({ lat: centerCell.center.lat, lng: centerCell.center.lng });
+        updateGeometryFieldFromSelection();
+    }
+    drawGrid();
 }
 
 function clearDrawing() {
-    if (drawnRectangle) {
-        map.removeLayer(drawnRectangle);
-        drawnRectangle = null;
-    }
+    selectedCellPoints = [];
     document.getElementById('geometry').value = '';
+    drawGrid();
 }
 
-function updateGeometryField(sw, ne) {
-    // sw, ne – массивы [lat, lng]
-    const wkt = `POLYGON((${sw[1]} ${sw[0]}, ${ne[1]} ${sw[0]}, ${ne[1]} ${ne[0]}, ${sw[1]} ${ne[0]}, ${sw[1]} ${sw[0]}))`;
-    document.getElementById('geometry').value = wkt;
-}
-
-// При движении карты обновляем прямоугольник
-map.on('moveend', () => {
-    if (document.getElementById('geometry').value) drawRectangle();
+// При движении/масштабировании карты обновляем сетку
+map.on('moveend zoomend', () => {
+    drawGrid();
 });
 
 // --- Управление формой ---
 window.onload = () => {
+    drawGrid();
     drawRectangle();
     const today = new Date();
     const weekAgo = new Date(today);
@@ -157,7 +272,7 @@ document.getElementById('analysisForm').onsubmit = async (e) => {
     e.preventDefault();
     const geometry = document.getElementById('geometry').value;
     if (!geometry) {
-        alert('Пожалуйста, нарисуйте область на карте (кнопка "Обновить область").');
+        alert('Пожалуйста, выберите одну или несколько ячеек на карте.');
         return;
     }
 
