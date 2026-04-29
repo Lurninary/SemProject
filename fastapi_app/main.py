@@ -86,6 +86,9 @@ async def get_results(request_id: int):
                 )
             if status == "failed":
                 raise HTTPException(status_code=500, detail="Analysis failed")
+            # Defensive: sometimes request may be marked completed while no valid records were produced.
+            if status == "completed":
+                raise HTTPException(status_code=500, detail="Analysis completed but no valid records were found")
             raise HTTPException(status_code=404, detail="Results not found")
         avg_moisture = sum(r.mean_soil_moisture for r in rows) / len(rows)
         return {
@@ -193,6 +196,18 @@ async def perform_analysis(request: AnalysisRequest):
         )
     except Exception as e:
         print(f"[Background] GEE error: {e}")
+        db = SessionLocal()
+        try:
+            req = db.query(AnalysisRequestModel).filter(AnalysisRequestModel.id == request.request_id).first()
+            if req:
+                req.status = "failed"
+                db.commit()
+        finally:
+            db.close()
+        return
+
+    if not smap_data:
+        print(f"[Background] GEE returned no valid records for request {request.request_id}")
         db = SessionLocal()
         try:
             req = db.query(AnalysisRequestModel).filter(AnalysisRequestModel.id == request.request_id).first()

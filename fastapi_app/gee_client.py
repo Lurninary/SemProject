@@ -2,6 +2,7 @@ import ee
 import geopandas as gpd
 from shapely import wkt
 from typing import List, Dict, Any
+from datetime import datetime, timedelta
 
 class GeeClient:
     def __init__(self, service_account_path: str = None):
@@ -19,7 +20,9 @@ class GeeClient:
         """Преобразует WKT строку в ee.Geometry.Polygon."""
         gdf = gpd.GeoDataFrame(geometry=[wkt.loads(wkt_str)], crs='EPSG:4326')
         geojson = gdf.__geo_interface__['features'][0]['geometry']
-        return ee.Geometry(geojson)
+        # Небольшой buffer повышает вероятность попадания в пиксели SMAP,
+        # особенно когда пользовательский прямоугольник слишком мал.
+        return ee.Geometry(geojson).buffer(1000)
 
     def get_smap_daily(self, geometry_wkt: str, date_from: str, date_to: str) -> List[Dict[str, Any]]:
         """
@@ -29,8 +32,13 @@ class GeeClient:
         geom = self._wkt_to_ee_geometry(geometry_wkt)
 
         # Коллекция SMAP L4 Global 9 km (поверхностная влажность 0-5 см)
-        smap_collection = ee.ImageCollection('NASA/SMAP/SPL4SMGP/007') \
-            .filterDate(date_from, date_to) \
+        # Earth Engine filterDate может вести себя как end exclusive, а также внутри дня значения
+        # иногда сдвинуты. Расширим интервал на 1 день с обеих сторон.
+        start = (datetime.strptime(date_from, "%Y-%m-%d").date() - timedelta(days=1)).isoformat()
+        end = (datetime.strptime(date_to, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
+        # Используем актуальный датасет 008 вместо deprecated 007.
+        smap_collection = ee.ImageCollection('NASA/SMAP/SPL4SMGP/008') \
+            .filterDate(start, end) \
             .select(['sm_surface'])  # объёмная доля влаги (0-1)
 
         def extract_data(image):
