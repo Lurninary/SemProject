@@ -51,14 +51,18 @@ window.onload = () => {
     document.getElementById('date_to').valueAsDate = today;
 };
 
-let chartInstance = null;
+let analysisChartInstance = null;
+let historyChartInstance = null;
+let historyPollInterval = null;
+let historyLoaded = false;
+let historyData = [];
 
-function renderChart(details) {
-    const ctx = document.getElementById('moistureChart').getContext('2d');
-    if (chartInstance) chartInstance.destroy();
+function renderChart(details, canvasId, existingChartInstance) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (existingChartInstance) existingChartInstance.destroy();
     const labels = details.map(d => d.date.slice(5)); // MM-DD
     const values = details.map(d => d.moisture);
-    chartInstance = new Chart(ctx, {
+    const newChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
@@ -85,10 +89,11 @@ function renderChart(details) {
             }
         }
     });
+    return newChart;
 }
 
-function renderTable(details) {
-    const container = document.getElementById('detailsTable');
+function renderTable(details, containerId) {
+    const container = document.getElementById(containerId);
     if (!details.length) {
         container.innerHTML = '<p>Нет детальных данных</p>';
         return;
@@ -118,8 +123,8 @@ async function pollResult(requestId) {
                 statusSpan.innerText = '✅ Завершён';
                 moistureSpan.innerText = data.mean_soil_moisture;
                 if (data.details && data.details.length) {
-                    renderChart(data.details);
-                    renderTable(data.details);
+                    analysisChartInstance = renderChart(data.details, 'moistureChart', analysisChartInstance);
+                    renderTable(data.details, 'detailsTable');
                 }
                 clearInterval(interval);
                 submitBtn.disabled = false;
@@ -128,7 +133,8 @@ async function pollResult(requestId) {
                 // В обработке
                 statusSpan.innerText = '⏳ Обработка... (запрос данных SMAP)';
                 moistureSpan.innerText = '—';
-                if (chartInstance) chartInstance.destroy();
+                if (analysisChartInstance) analysisChartInstance.destroy();
+                analysisChartInstance = null;
                 document.getElementById('detailsTable').innerHTML = '';
             }
             else if (res.status === 500) {
@@ -190,3 +196,137 @@ document.getElementById('analysisForm').onsubmit = async (e) => {
         submitBtn.innerText = '🚀 Запустить анализ';
     }
 };
+
+// --- Вкладки ---
+function openTab(tabName) {
+    const analysisTab = document.getElementById('tab-analysis');
+    const historyTab = document.getElementById('tab-history');
+    const analysisBtn = document.querySelector(".tab-btn[data-tab='analysis']");
+    const historyBtn = document.querySelector(".tab-btn[data-tab='history']");
+
+    if (tabName === 'analysis') {
+        analysisTab.classList.remove('hidden');
+        historyTab.classList.add('hidden');
+        if (analysisBtn) analysisBtn.classList.add('active');
+        if (historyBtn) historyBtn.classList.remove('active');
+    } else {
+        historyTab.classList.remove('hidden');
+        analysisTab.classList.add('hidden');
+        if (historyBtn) historyBtn.classList.add('active');
+        if (analysisBtn) analysisBtn.classList.remove('active');
+        if (!historyLoaded) {
+            historyLoaded = true;
+            loadHistory();
+        }
+    }
+}
+
+// --- История анализов ---
+async function loadHistory() {
+    const historyList = document.getElementById('historyList');
+    historyList.innerHTML = '<p>Загрузка...</p>';
+
+    try {
+        const res = await fetch('/api/requests?limit=20');
+        const data = await res.json();
+
+        if (!Array.isArray(data) || data.length === 0) {
+            historyList.innerHTML = '<p>Пока нет созданных анализов.</p>';
+            return;
+        }
+
+        historyData = data;
+        historyList.innerHTML = data.map(r => {
+            const status = r.status || 'pending';
+            const badge = status === 'completed'
+                ? '✅'
+                : (status === 'failed' ? '❌' : '⏳');
+            return `
+                <div class="history-item" role="button" tabindex="0" onclick="selectHistory(${r.id})">
+                    <div class="history-item-left">
+                        <div class="history-title">${r.name || 'Без названия'}</div>
+                        <div class="history-subtitle">ID: ${r.id} • ${r.created_at}</div>
+                    </div>
+                    <div class="history-badge">${badge}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (e) {
+        historyList.innerHTML = '<p>Ошибка загрузки истории.</p>';
+        console.warn(e);
+    }
+}
+
+function clearHistoryDetails() {
+    const panel = document.getElementById('historyDetailsPanel');
+    panel.classList.add('hidden');
+    document.getElementById('historyError').classList.add('hidden');
+    document.getElementById('detailsTableHistory').innerHTML = '';
+    document.getElementById('historyMoistureValue').innerText = '—';
+    document.getElementById('historyStatusValue').innerText = '—';
+    const nameEl = document.getElementById('historyName');
+    if (nameEl) nameEl.innerText = '—';
+    const idEl = document.getElementById('historyRequestId');
+    if (idEl) idEl.innerText = '—';
+    if (historyChartInstance) historyChartInstance.destroy();
+    historyChartInstance = null;
+
+    if (historyPollInterval) {
+        clearInterval(historyPollInterval);
+        historyPollInterval = null;
+    }
+}
+
+async function pollHistoryResult(requestId) {
+    clearHistoryDetails();
+    document.getElementById('historyDetailsPanel').classList.remove('hidden');
+    document.getElementById('historyRequestId').innerText = requestId;
+    const selected = (historyData || []).find(x => x.id === requestId);
+    document.getElementById('historyName').innerText = selected?.name || 'Без названия';
+
+    const statusSpan = document.getElementById('historyStatusValue');
+    const moistureSpan = document.getElementById('historyMoistureValue');
+    const errorBox = document.getElementById('historyError');
+
+    historyPollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/results/${requestId}`);
+            const data = await res.json();
+
+            if (res.status === 200 && data.status === 'completed') {
+                statusSpan.innerText = '✅ Завершён';
+                moistureSpan.innerText = data.mean_soil_moisture;
+                errorBox.classList.add('hidden');
+                if (data.details && data.details.length) {
+                    historyChartInstance = renderChart(data.details, 'moistureChartHistory', historyChartInstance);
+                    renderTable(data.details, 'detailsTableHistory');
+                }
+                clearInterval(historyPollInterval);
+                historyPollInterval = null;
+            } else if (res.status === 202) {
+                statusSpan.innerText = '⏳ Обработка...';
+                moistureSpan.innerText = '—';
+                if (historyChartInstance) {
+                    historyChartInstance.destroy();
+                    historyChartInstance = null;
+                }
+                document.getElementById('detailsTableHistory').innerHTML = '';
+            } else if (res.status === 500) {
+                statusSpan.innerText = '❌ Ошибка анализа';
+                moistureSpan.innerText = '—';
+                errorBox.innerText = data.detail || 'Ошибка анализа';
+                errorBox.classList.remove('hidden');
+                clearInterval(historyPollInterval);
+                historyPollInterval = null;
+            } else {
+                statusSpan.innerText = '⏳ Ожидание...';
+            }
+        } catch (err) {
+            console.warn('history poll error', err);
+        }
+    }, 3000);
+}
+
+function selectHistory(requestId) {
+    pollHistoryResult(requestId);
+}

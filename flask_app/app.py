@@ -77,13 +77,17 @@ def get_results(request_id):
 @app.route('/api/requests')
 def list_requests():
     """Список всех запросов."""
-    requests = AnalysisRequest.query.all()
+    limit = request.args.get("limit", default=20, type=int)
+    q = AnalysisRequest.query.order_by(AnalysisRequest.id.desc())
+    if limit and limit > 0:
+        q = q.limit(limit)
+    requests_list = q.all()
     return jsonify([{
         "id": r.id,
         "name": r.name,
         "status": r.status,
         "created_at": str(r.created_at)
-    } for r in requests])
+    } for r in requests_list])
 
 if __name__ == '__main__':
     with app.app_context():

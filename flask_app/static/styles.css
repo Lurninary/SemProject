@@ -208,7 +208,118 @@ textarea {
     display: none;
 }
 
+#tab-analysis, #tab-history {
+    width: 100%;
+}
+
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1rem;
+}
+
+.tab-btn {
+    flex: 1;
+    border: 1.5px solid #cfdfcf;
+    background: white;
+    padding: 10px 14px;
+    border-radius: 22px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.2s;
+}
+
+.tab-btn:hover {
+    background: #e2f0de;
+}
+
+.tab-btn.active {
+    border-color: #4c9a2a;
+    background: rgba(76,154,42,0.12);
+    color: #1e551e;
+}
+
+.tab-content {
+    width: 100%;
+}
+
+.history-controls {
+    margin: 6px 0 14px;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 6px;
+    margin-top: 10px;
+}
+
+.history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    background: white;
+    border: 1.5px solid #cfdfcf;
+    border-radius: 18px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: 0.15s;
+}
+
+.history-item:hover {
+    background: #e2f0de;
+}
+
+.history-item-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.history-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.history-subtitle {
+    font-size: 0.75rem;
+    color: #3a5a3a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-badge {
+    font-weight: 800;
+    min-width: 36px;
+    text-align: right;
+}
+
+.muted {
+    color: #3a5a3a;
+    font-size: 0.85rem;
+}
+
+.error-text {
+    color: #b00020;
+    margin: 8px 0;
+}
+
 #detailsTable {
+    margin-top: 16px;
+    font-size: 0.8rem;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #fafdf7;
+    border-radius: 20px;
+    padding: 4px 8px;
+}
+
+#detailsTableHistory {
     margin-top: 16px;
     font-size: 0.8rem;
     max-height: 200px;

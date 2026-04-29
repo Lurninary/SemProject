@@ -29,43 +29,82 @@
             </div>
         </div>
 
-        <!-- Форма + результаты -->
+        <!-- Анализ + история -->
         <div class="card form-card">
-            <h3>📝 Параметры анализа</h3>
-            <form id="analysisForm">
-                <div class="input-group">
-                    <label>Название (опционально)</label>
-                    <input type="text" id="name" placeholder="Например: Поле у реки">
-                </div>
-                <div class="input-group">
-                    <label>WKT геометрия (обновится автоматически)</label>
-                    <textarea id="geometry" readonly rows="3" placeholder="Нарисуйте область на карте"></textarea>
-                </div>
-                <div class="date-range">
-                    <div class="input-group">
-                        <label>Дата от</label>
-                        <input type="date" id="date_from" required>
-                    </div>
-                    <div class="input-group">
-                        <label>Дата до</label>
-                        <input type="date" id="date_to" required>
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-primary" id="submitBtn">🚀 Запустить анализ</button>
-            </form>
+            <div class="tabs">
+                <button type="button" class="tab-btn active" data-tab="analysis" onclick="openTab('analysis')">📝 Анализ</button>
+                <button type="button" class="tab-btn" data-tab="history" onclick="openTab('history')">📚 История</button>
+            </div>
 
-            <!-- Блок результатов (изначально скрыт) -->
-            <div id="resultsPanel" class="results-panel hidden">
-                <h3>📊 Результаты</h3>
+            <div id="tab-analysis" class="tab-content">
+                <h3>📝 Параметры анализа</h3>
+                <form id="analysisForm">
+                    <div class="input-group">
+                        <label>Название (опционально)</label>
+                        <input type="text" id="name" placeholder="Например: Поле у реки">
+                    </div>
+                    <div class="input-group">
+                        <label>WKT геометрия (обновится автоматически)</label>
+                        <textarea id="geometry" readonly rows="3" placeholder="Нарисуйте область на карте"></textarea>
+                    </div>
+                    <div class="date-range">
+                        <div class="input-group">
+                            <label>Дата от</label>
+                            <input type="date" id="date_from" required>
+                        </div>
+                        <div class="input-group">
+                            <label>Дата до</label>
+                            <input type="date" id="date_to" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="submitBtn">🚀 Запустить анализ</button>
+                </form>
+
+                <!-- Блок результатов (изначально скрыт) -->
+                <div id="resultsPanel" class="results-panel hidden">
+                    <h3>📊 Результаты</h3>
+                    <div class="status-badge">
+                        <span id="statusLabel">Статус:</span>
+                        <span id="statusValue" class="status-badge-text">—</span>
+                    </div>
+                    <div class="moisture-value">
+                        Средняя влажность: <strong id="moistureValue">—</strong> %
+                    </div>
+                    <canvas id="moistureChart" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
+                    <div id="detailsTable"></div>
+                </div>
+            </div>
+
+            <div id="tab-history" class="tab-content hidden">
+                <h3>📚 Созданные анализы</h3>
+                <div class="history-controls">
+                    <button type="button" class="btn btn-outline" onclick="loadHistory()">🔄 Обновить список</button>
+                </div>
+                <div id="historyList" class="history-list">
+                    <p class="muted">Здесь появятся ваши запросы.</p>
+                </div>
+
+                <div id="historyDetailsPanel" class="results-panel hidden">
+                    <h3>📊 Детали анализа</h3>
+                    <div class="status-badge">
+                    <span>Анализ:</span>
+                    <span id="historyName" class="status-badge-text">—</span>
+                </div>
                 <div class="status-badge">
-                    <span id="statusLabel">Статус:</span>
-                    <span id="statusValue" class="status-badge-text">—</span>
+                    <span>ID:</span>
+                    <span id="historyRequestId" class="status-badge-text">—</span>
+                    </div>
+                    <div class="status-badge">
+                        <span id="historyStatusLabel">Статус:</span>
+                        <span id="historyStatusValue" class="status-badge-text">—</span>
+                    </div>
+                    <div class="moisture-value">
+                        Средняя влажность: <strong id="historyMoistureValue">—</strong> %
+                    </div>
+                    <div id="historyError" class="error-text hidden"></div>
+                    <canvas id="moistureChartHistory" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
+                    <div id="detailsTableHistory"></div>
                 </div>
-                <div class="moisture-value">
-                    Средняя влажность: <strong id="moistureValue">—</strong> %
-                </div>
-                <canvas id="moistureChart" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
-                <div id="detailsTable"></div>
             </div>
         </div>
     </div>
