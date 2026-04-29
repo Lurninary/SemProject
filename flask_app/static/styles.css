@@ -66,12 +66,24 @@ header p {
     padding: 0.8rem;
 }
 
+.heatmap-card {
+    margin-top: 1.5rem;
+}
+
 #map {
     height: 500px;
     border-radius: 20px;
     overflow: hidden;
     border: 2px solid #cfe3cf;
     margin-bottom: 12px;
+}
+
+#heatmapMap {
+    height: 420px;
+    border-radius: 20px;
+    overflow: hidden;
+    border: 2px solid #cfe3cf;
+    margin-top: 10px;
 }
 
 .map-controls {

@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 from models import db, AnalysisRequest
 import os
 import requests
+import json
 from datetime import datetime
 from sqlalchemy import func, cast
 from geoalchemy2 import Geometry
@@ -118,6 +119,27 @@ def request_bounds(request_id):
         "west": float(row.west),
         "north": float(row.north),
         "east": float(row.east),
+    })
+
+
+@app.route('/api/requests/<int:request_id>/geometry')
+def request_geometry(request_id):
+    row = (
+        db.session.query(
+            AnalysisRequest.name.label("name"),
+            func.ST_AsGeoJSON(cast(AnalysisRequest.geometry, Geometry)).label("geometry_json"),
+        )
+        .filter(AnalysisRequest.id == request_id)
+        .first()
+    )
+
+    if not row or not row.geometry_json:
+        return jsonify({"error": "Geometry not found"}), 404
+
+    return jsonify({
+        "request_id": request_id,
+        "name": row.name,
+        "geometry": json.loads(row.geometry_json),
     })
 
 if __name__ == '__main__':

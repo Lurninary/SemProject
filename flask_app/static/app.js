@@ -5,6 +5,10 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 }).addTo(map);
 
 const gridLayer = L.layerGroup().addTo(map);
+let selectedGeometryLayer = null;
+let heatmapMap = null;
+let heatmapOverlayLayer = null;
+let heatmapGeometryLayer = null;
 const GRID_LEVELS = [
     { id: "coarse", minZoom: 0, maxZoom: 8, cellSizePx: 144, anchorZoom: 8 },
     { id: "medium", minZoom: 9, maxZoom: 11, cellSizePx: 120, anchorZoom: 11 },
@@ -146,10 +150,183 @@ function clearDrawing() {
     drawGrid();
 }
 
+function clearUserSelectionAndGeometry() {
+    selectedCells.clear();
+    document.getElementById('geometry').value = '';
+    drawGrid();
+}
+
 // При движении/масштабировании карты обновляем сетку
 map.on('moveend zoomend', () => {
     drawGrid();
 });
+
+function setMainMapGeometryHighlight(geojson, fitBounds = false) {
+    if (selectedGeometryLayer) {
+        map.removeLayer(selectedGeometryLayer);
+        selectedGeometryLayer = null;
+    }
+    if (!geojson) return;
+
+    selectedGeometryLayer = L.geoJSON(geojson, {
+        style: {
+            color: "#145a8d",
+            weight: 2.5,
+            fillColor: "#53a4d6",
+            fillOpacity: 0.12
+        }
+    }).addTo(map);
+
+    if (fitBounds) {
+        map.fitBounds(selectedGeometryLayer.getBounds(), { padding: [24, 24], maxZoom: 14 });
+    }
+}
+
+async function fetchRequestGeometry(requestId) {
+    const res = await fetch(`/api/requests/${requestId}/geometry`);
+    if (!res.ok) {
+        throw new Error(`Failed to load geometry for request ${requestId}`);
+    }
+    return res.json();
+}
+
+function initHeatmapMapIfNeeded() {
+    const section = document.getElementById("heatmapSection");
+    section.classList.remove("hidden");
+
+    if (!heatmapMap) {
+        heatmapMap = L.map("heatmapMap", { zoomControl: true });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> & CartoDB'
+        }).addTo(heatmapMap);
+    }
+    setTimeout(() => heatmapMap.invalidateSize(), 50);
+}
+
+function pointInRing(lng, lat, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const intersect = ((yi > lat) !== (yj > lat)) &&
+            (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function computeSeriesVariability(details) {
+    if (!Array.isArray(details) || details.length < 2) return 0.2;
+    const values = details
+        .map((d) => Number(d.moisture))
+        .filter((v) => Number.isFinite(v));
+    if (values.length < 2) return 0.2;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((acc, v) => acc + ((v - mean) ** 2), 0) / values.length;
+    const std = Math.sqrt(variance);
+    return Math.max(0.15, Math.min(0.55, std / 12));
+}
+
+function pseudoSpatialModulation(lat, lng, seed) {
+    const s1 = Math.sin((lat * 37.17) + seed);
+    const s2 = Math.cos((lng * 29.41) - seed * 0.7);
+    const s3 = Math.sin((lat + lng) * 11.3 + seed * 0.31);
+    return (s1 + s2 + s3) / 3; // ~[-1..1]
+}
+
+function sampleHeatPointsFromPolygonRing(ring, baseIntensity, variability, seed) {
+    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+    ring.forEach(([lng, lat]) => {
+        minLng = Math.min(minLng, lng);
+        minLat = Math.min(minLat, lat);
+        maxLng = Math.max(maxLng, lng);
+        maxLat = Math.max(maxLat, lat);
+    });
+
+    const spanLng = Math.max(0.0001, maxLng - minLng);
+    const spanLat = Math.max(0.0001, maxLat - minLat);
+    const step = Math.max(0.0012, Math.min(0.018, Math.max(spanLng, spanLat) / 22));
+
+    const points = [];
+    let guard = 0;
+    for (let lat = minLat; lat <= maxLat; lat += step) {
+        for (let lng = minLng; lng <= maxLng; lng += step) {
+            if (pointInRing(lng, lat, ring)) {
+                const modulation = pseudoSpatialModulation(lat, lng, seed);
+                const intensity = Math.max(
+                    0.05,
+                    Math.min(1.0, baseIntensity + modulation * variability)
+                );
+                points.push([lat, lng, intensity]);
+                guard += 1;
+                if (guard > 3500) return points;
+            }
+        }
+    }
+
+    if (!points.length) {
+        const avgLng = ring.reduce((acc, p) => acc + p[0], 0) / ring.length;
+        const avgLat = ring.reduce((acc, p) => acc + p[1], 0) / ring.length;
+        points.push([avgLat, avgLng, baseIntensity]);
+    }
+
+    return points;
+}
+
+function sampleHeatPointsFromGeometry(geojson, meanMoisture, details) {
+    const intensity = Math.max(0.2, Math.min(1.0, (meanMoisture || 0) / 50));
+    const variability = computeSeriesVariability(details);
+    const pts = [];
+
+    if (!geojson) return pts;
+    if (geojson.type === "Polygon") {
+        pts.push(...sampleHeatPointsFromPolygonRing(geojson.coordinates[0], intensity, variability, 1));
+    } else if (geojson.type === "MultiPolygon") {
+        geojson.coordinates.forEach((poly, idx) => {
+            if (poly[0]) pts.push(...sampleHeatPointsFromPolygonRing(poly[0], intensity, variability, idx + 1));
+        });
+    }
+
+    return pts;
+}
+
+function renderHeatmapForGeometry(geojson, meanMoisture, titleText, details = []) {
+    initHeatmapMapIfNeeded();
+
+    if (heatmapOverlayLayer) {
+        heatmapMap.removeLayer(heatmapOverlayLayer);
+        heatmapOverlayLayer = null;
+    }
+    if (heatmapGeometryLayer) {
+        heatmapMap.removeLayer(heatmapGeometryLayer);
+        heatmapGeometryLayer = null;
+    }
+
+    const heatPoints = sampleHeatPointsFromGeometry(geojson, meanMoisture, details);
+    heatmapOverlayLayer = L.heatLayer(heatPoints, {
+        radius: 18,
+        blur: 14,
+        maxZoom: 17,
+        minOpacity: 0.25,
+        gradient: {
+            0.2: "#2a6fdb",
+            0.45: "#2db84d",
+            0.7: "#f4b400",
+            1.0: "#d93025"
+        }
+    }).addTo(heatmapMap);
+
+    heatmapGeometryLayer = L.geoJSON(geojson, {
+        style: {
+            color: "#253036",
+            weight: 2,
+            fillOpacity: 0
+        }
+    }).addTo(heatmapMap);
+
+    heatmapMap.fitBounds(heatmapGeometryLayer.getBounds(), { padding: [20, 20], maxZoom: 15 });
+    document.getElementById("heatmapMeta").innerText = titleText || "Тепловая карта влажности";
+}
 
 // --- Управление формой ---
 window.onload = () => {
@@ -167,6 +344,7 @@ let historyChartInstance = null;
 let historyPollInterval = null;
 let historyLoaded = false;
 let historyData = [];
+let currentHistoryGeometry = null;
 
 function renderChart(details, canvasId, existingChartInstance) {
     const ctx = document.getElementById(canvasId).getContext('2d');
@@ -236,6 +414,18 @@ async function pollResult(requestId) {
                 if (data.details && data.details.length) {
                     analysisChartInstance = renderChart(data.details, 'moistureChart', analysisChartInstance);
                     renderTable(data.details, 'detailsTable');
+                }
+                try {
+                    const geomPayload = await fetchRequestGeometry(requestId);
+                    setMainMapGeometryHighlight(geomPayload.geometry, false);
+                    renderHeatmapForGeometry(
+                        geomPayload.geometry,
+                        data.mean_soil_moisture,
+                        `Анализ #${requestId}: ${geomPayload.name || "без названия"}`,
+                        data.details || []
+                    );
+                } catch (e) {
+                    console.warn("failed to render heatmap for analysis", e);
                 }
                 clearInterval(interval);
                 submitBtn.disabled = false;
@@ -412,6 +602,14 @@ async function pollHistoryResult(requestId) {
                     historyChartInstance = renderChart(data.details, 'moistureChartHistory', historyChartInstance);
                     renderTable(data.details, 'detailsTableHistory');
                 }
+                if (currentHistoryGeometry) {
+                    renderHeatmapForGeometry(
+                        currentHistoryGeometry.geometry,
+                        data.mean_soil_moisture,
+                        `История #${requestId}: ${currentHistoryGeometry.name || "без названия"}`,
+                        data.details || []
+                    );
+                }
                 clearInterval(historyPollInterval);
                 historyPollInterval = null;
             } else if (res.status === 202) {
@@ -438,21 +636,15 @@ async function pollHistoryResult(requestId) {
     }, 3000);
 }
 
-async function zoomToHistoryAnalysis(requestId) {
+async function selectHistory(requestId) {
     try {
-        const res = await fetch(`/api/requests/${requestId}/bounds`);
-        if (!res.ok) return;
-        const b = await res.json();
-        map.fitBounds(
-            [[b.south, b.west], [b.north, b.east]],
-            { padding: [24, 24], maxZoom: 14 }
-        );
+        clearUserSelectionAndGeometry();
+        const geomPayload = await fetchRequestGeometry(requestId);
+        currentHistoryGeometry = geomPayload;
+        setMainMapGeometryHighlight(geomPayload.geometry, true);
     } catch (err) {
-        console.warn("zoom history analysis error", err);
+        console.warn("history geometry load error", err);
+        currentHistoryGeometry = null;
     }
-}
-
-function selectHistory(requestId) {
-    zoomToHistoryAnalysis(requestId);
     pollHistoryResult(requestId);
 }
