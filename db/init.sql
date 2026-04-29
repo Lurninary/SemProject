@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS analysis_requests (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255),
-    geometry GEOGRAPHY(POLYGON, 4326),
+    geometry GEOGRAPHY(GEOMETRY, 4326),
     date_from DATE,
     date_to DATE,
     created_at TIMESTAMP DEFAULT NOW(),

@@ -7,7 +7,7 @@ class AnalysisRequest(db.Model):
     __tablename__ = 'analysis_requests'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255))
-    geometry = db.Column(Geography(geometry_type='POLYGON', srid=4326))
+    geometry = db.Column(Geography(geometry_type='GEOMETRY', srid=4326))
     date_from = db.Column(db.Date)
     date_to = db.Column(db.Date)
     created_at = db.Column(db.DateTime, server_default=db.func.now())

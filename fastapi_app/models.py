@@ -9,7 +9,7 @@ class AnalysisRequestModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255))
-    geometry = Column(Geography(geometry_type="POLYGON", srid=4326))
+    geometry = Column(Geography(geometry_type="GEOMETRY", srid=4326))
     date_from = Column(Date)
     date_to = Column(Date)
     created_at = Column(DateTime, server_default=func.now())

@@ -5,53 +5,61 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 }).addTo(map);
 
 const gridLayer = L.layerGroup().addTo(map);
-let selectedCellPoints = [];
+const GRID_LEVELS = [
+    { id: "coarse", minZoom: 0, maxZoom: 8, cellSizePx: 144, anchorZoom: 8 },
+    { id: "medium", minZoom: 9, maxZoom: 11, cellSizePx: 120, anchorZoom: 11 },
+    { id: "fine", minZoom: 12, maxZoom: 13, cellSizePx: 92, anchorZoom: 13 },
+    { id: "x-fine", minZoom: 14, maxZoom: 30, cellSizePx: 72, anchorZoom: 14 },
+];
 
-function getGridSizePixels(zoom) {
-    if (zoom >= 14) return 70;
-    if (zoom >= 12) return 84;
-    if (zoom >= 10) return 100;
-    if (zoom >= 8) return 120;
-    return 144;
+let currentGridLevel = null;
+let selectedCells = new Map();
+
+function getGridLevel(zoom) {
+    return GRID_LEVELS.find((lvl) => zoom >= lvl.minZoom && zoom <= lvl.maxZoom) || GRID_LEVELS[0];
 }
 
-function getCellForLatLng(lat, lng, zoomOverride = null) {
-    const zoom = zoomOverride ?? map.getZoom();
-    const sizePx = getGridSizePixels(zoom);
-    const p = map.project([lat, lng], zoom);
-    const ix = Math.floor(p.x / sizePx);
-    const iy = Math.floor(p.y / sizePx);
-
+function buildCell(ix, iy, level) {
+    const sizePx = level.cellSizePx;
     const minPoint = L.point(ix * sizePx, iy * sizePx);
     const maxPoint = L.point((ix + 1) * sizePx, (iy + 1) * sizePx);
-
-    const nw = map.unproject(minPoint, zoom);
-    const se = map.unproject(maxPoint, zoom);
+    const nw = map.unproject(minPoint, level.anchorZoom);
+    const se = map.unproject(maxPoint, level.anchorZoom);
 
     return {
-        key: `${zoom}:${ix}:${iy}`,
+        key: `${level.id}:${ix}:${iy}`,
         ix,
         iy,
-        zoom,
+        levelId: level.id,
         minLat: se.lat,
         minLng: nw.lng,
         maxLat: nw.lat,
         maxLng: se.lng,
-        center: map.unproject(L.point((ix + 0.5) * sizePx, (iy + 0.5) * sizePx), zoom),
+        center: map.unproject(L.point((ix + 0.5) * sizePx, (iy + 0.5) * sizePx), level.anchorZoom),
     };
 }
 
-function buildCellsFromSelectedPoints() {
-    const byKey = new Map();
-    selectedCellPoints.forEach((p) => {
-        const cell = getCellForLatLng(p.lat, p.lng);
-        byKey.set(cell.key, cell);
+function getCellForLatLng(lat, lng, level) {
+    const sizePx = level.cellSizePx;
+    const p = map.project([lat, lng], level.anchorZoom);
+    const ix = Math.floor(p.x / sizePx);
+    const iy = Math.floor(p.y / sizePx);
+
+    return buildCell(ix, iy, level);
+}
+
+function remapSelectedCells(targetLevel) {
+    if (!selectedCells.size) return;
+    const next = new Map();
+    selectedCells.forEach((cell) => {
+        const mapped = getCellForLatLng(cell.center.lat, cell.center.lng, targetLevel);
+        next.set(mapped.key, mapped);
     });
-    return byKey;
+    selectedCells = next;
 }
 
 function updateGeometryFieldFromSelection() {
-    const cells = Array.from(buildCellsFromSelectedPoints().values())
+    const cells = Array.from(selectedCells.values())
         .sort((a, b) => (a.minLat - b.minLat) || (a.minLng - b.minLng));
 
     if (!cells.length) {
@@ -71,13 +79,10 @@ function updateGeometryFieldFromSelection() {
 }
 
 function toggleCellSelection(cell) {
-    const currentKey = cell.key;
-    const hasCell = selectedCellPoints.some((p) => getCellForLatLng(p.lat, p.lng).key === currentKey);
-
-    if (hasCell) {
-        selectedCellPoints = selectedCellPoints.filter((p) => getCellForLatLng(p.lat, p.lng).key !== currentKey);
+    if (selectedCells.has(cell.key)) {
+        selectedCells.delete(cell.key);
     } else {
-        selectedCellPoints.push({ lat: cell.center.lat, lng: cell.center.lng });
+        selectedCells.set(cell.key, cell);
     }
 
     updateGeometryFieldFromSelection();
@@ -88,36 +93,27 @@ function drawGrid() {
     gridLayer.clearLayers();
 
     const bounds = map.getBounds();
-    const zoom = map.getZoom();
-    const sizePx = getGridSizePixels(zoom);
+    const nextLevel = getGridLevel(map.getZoom());
+    const levelChanged = !currentGridLevel || nextLevel.id !== currentGridLevel.id;
+    currentGridLevel = nextLevel;
+    if (levelChanged) {
+        remapSelectedCells(currentGridLevel);
+        updateGeometryFieldFromSelection();
+    }
 
-    const nwPoint = map.project(bounds.getNorthWest(), zoom);
-    const sePoint = map.project(bounds.getSouthEast(), zoom);
+    const sizePx = currentGridLevel.cellSizePx;
+
+    const nwPoint = map.project(bounds.getNorthWest(), currentGridLevel.anchorZoom);
+    const sePoint = map.project(bounds.getSouthEast(), currentGridLevel.anchorZoom);
 
     const minIx = Math.floor(nwPoint.x / sizePx) - 1;
     const maxIx = Math.ceil(sePoint.x / sizePx) + 1;
     const minIy = Math.floor(nwPoint.y / sizePx) - 1;
     const maxIy = Math.ceil(sePoint.y / sizePx) + 1;
 
-    const selectedCells = buildCellsFromSelectedPoints();
-
     for (let ix = minIx; ix <= maxIx; ix += 1) {
         for (let iy = minIy; iy <= maxIy; iy += 1) {
-            const minPoint = L.point(ix * sizePx, iy * sizePx);
-            const maxPoint = L.point((ix + 1) * sizePx, (iy + 1) * sizePx);
-            const nw = map.unproject(minPoint, zoom);
-            const se = map.unproject(maxPoint, zoom);
-            const cell = {
-                key: `${zoom}:${ix}:${iy}`,
-                ix,
-                iy,
-                zoom,
-                minLat: se.lat,
-                minLng: nw.lng,
-                maxLat: nw.lat,
-                maxLng: se.lng,
-                center: map.unproject(L.point((ix + 0.5) * sizePx, (iy + 0.5) * sizePx), zoom),
-            };
+            const cell = buildCell(ix, iy, currentGridLevel);
 
             const isSelected = selectedCells.has(cell.key);
             const rect = L.rectangle(
@@ -135,17 +131,17 @@ function drawGrid() {
 
 function drawRectangle() {
     const center = map.getCenter();
-    const centerCell = getCellForLatLng(center.lat, center.lng);
-    const exists = selectedCellPoints.some((p) => getCellForLatLng(p.lat, p.lng).key === centerCell.key);
-    if (!exists) {
-        selectedCellPoints.push({ lat: centerCell.center.lat, lng: centerCell.center.lng });
+    const level = currentGridLevel || getGridLevel(map.getZoom());
+    const centerCell = getCellForLatLng(center.lat, center.lng, level);
+    if (!selectedCells.has(centerCell.key)) {
+        selectedCells.set(centerCell.key, centerCell);
         updateGeometryFieldFromSelection();
     }
     drawGrid();
 }
 
 function clearDrawing() {
-    selectedCellPoints = [];
+    selectedCells.clear();
     document.getElementById('geometry').value = '';
     drawGrid();
 }

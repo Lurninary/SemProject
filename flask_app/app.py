@@ -3,6 +3,7 @@ from models import db, AnalysisRequest
 import os
 import requests
 from datetime import datetime
+from sqlalchemy import text
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
@@ -10,6 +11,19 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 FASTAPI_URL = os.getenv('FASTAPI_URL', 'http://fastapi_app:8000')
 
 db.init_app(app)
+
+
+def ensure_geometry_column_supports_multipolygon():
+    """
+    Ensure existing DBs accept both POLYGON and MULTIPOLYGON geometries.
+    """
+    db.session.execute(text("""
+        ALTER TABLE analysis_requests
+        ALTER COLUMN geometry
+        TYPE geography(GEOMETRY, 4326)
+        USING geometry::geometry::geography
+    """))
+    db.session.commit()
 
 
 @app.route('/')
@@ -92,4 +106,5 @@ def list_requests():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        ensure_geometry_column_supports_multipolygon()
     app.run(host='0.0.0.0', port=5000, debug=True)
