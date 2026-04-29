@@ -1,113 +1,192 @@
-const map = L.map('map').setView([55.75, 37.62], 10); // Центр на Москве
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+// --- Инициализация карты ---
+const map = L.map('map').setView([55.75, 37.62], 9);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> & CartoDB'
 }).addTo(map);
 
 let drawnRectangle = null;
+let currentBounds = null;
 
 function drawRectangle() {
-    if (drawnRectangle) {
-        map.removeLayer(drawnRectangle);
-    }
+    if (drawnRectangle) map.removeLayer(drawnRectangle);
     const bounds = map.getBounds();
-    const southWest = bounds.getSouthWest();
-    const northEast = bounds.getNorthEast();
-    const latDelta = (northEast.lat - southWest.lat) * 0.2;
-    const lngDelta = (northEast.lng - southWest.lng) * 0.2;
-    const sw = [southWest.lat + latDelta, southWest.lng + lngDelta];
-    const ne = [northEast.lat - latDelta, northEast.lng - lngDelta];
-    drawnRectangle = L.rectangle([sw, ne], { color: "#ff7800", weight: 2 }).addTo(map);
-    updateGeometryField(sw, ne);
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    // Отступ 10% от границ, чтобы прямоугольник был чуть меньше видимой области
+    const pad = 0.08;
+    const latPad = (ne.lat - sw.lat) * pad;
+    const lngPad = (ne.lng - sw.lng) * pad;
+    const newSw = [sw.lat + latPad, sw.lng + lngPad];
+    const newNe = [ne.lat - latPad, ne.lng - lngPad];
+    drawnRectangle = L.rectangle([newSw, newNe], { color: "#ff7800", weight: 3, opacity: 0.8 }).addTo(map);
+    updateGeometryField(newSw, newNe);
 }
 
 function clearDrawing() {
     if (drawnRectangle) {
         map.removeLayer(drawnRectangle);
         drawnRectangle = null;
-        document.getElementById('geometry').value = '';
     }
+    document.getElementById('geometry').value = '';
 }
 
-// Преобразование координат в WKT POLYGON
 function updateGeometryField(sw, ne) {
-    // sw и ne - массивы [lat, lng]
+    // sw, ne – массивы [lat, lng]
     const wkt = `POLYGON((${sw[1]} ${sw[0]}, ${ne[1]} ${sw[0]}, ${ne[1]} ${ne[0]}, ${sw[1]} ${ne[0]}, ${sw[1]} ${sw[0]}))`;
     document.getElementById('geometry').value = wkt;
 }
 
-document.getElementById('analysisForm').onsubmit = async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('name').value;
-    const geometry = document.getElementById('geometry').value;
-    const date_from = document.getElementById('date_from').value;
-    const date_to = document.getElementById('date_to').value;
+// При движении карты обновляем прямоугольник
+map.on('moveend', () => {
+    if (document.getElementById('geometry').value) drawRectangle();
+});
 
-    if (!geometry) {
-        alert('Пожалуйста, нарисуйте область на карте.');
-        return;
-    }
-
-    const formData = { name, geometry, date_from, date_to };
-
-    try {
-        const response = await fetch('/api/submit_analysis', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData)
-        });
-
-        const result = await response.json();
-
-        if (response.status === 202) {
-            const requestId = result.id;
-            document.getElementById('results').classList.remove('hidden');
-            document.getElementById('status').innerText = 'processing...';
-
-            pollResult(requestId);
-        } else {
-            alert('Ошибка: ' + (result.error || 'Неизвестная ошибка'));
-        }
-    } catch (err) {
-        alert('Ошибка сети: ' + err.message);
-    }
+// --- Управление формой ---
+window.onload = () => {
+    drawRectangle();
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(today.getDate() - 7);
+    document.getElementById('date_from').valueAsDate = weekAgo;
+    document.getElementById('date_to').valueAsDate = today;
 };
 
-// Функция опроса результата
+let chartInstance = null;
+
+function renderChart(details) {
+    const ctx = document.getElementById('moistureChart').getContext('2d');
+    if (chartInstance) chartInstance.destroy();
+    const labels = details.map(d => d.date.slice(5)); // MM-DD
+    const values = details.map(d => d.moisture);
+    chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Влажность почвы (%)',
+                data: values,
+                borderColor: '#3c8c3c',
+                backgroundColor: 'rgba(76,154,42,0.1)',
+                tension: 0.2,
+                fill: true,
+                pointBackgroundColor: '#2b6e2b',
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: { callbacks: { label: (ctx) => `${ctx.raw}%` } }
+            },
+            scales: {
+                y: { title: { display: true, text: 'Влажность (%)' }, min: 0, max: 50 }
+            }
+        }
+    });
+}
+
+function renderTable(details) {
+    const container = document.getElementById('detailsTable');
+    if (!details.length) {
+        container.innerHTML = '<p>Нет детальных данных</p>';
+        return;
+    }
+    let html = '<table class="detail-table"><thead><tr><th>Дата</th><th>Влажность (%)</th></tr></thead><tbody>';
+    details.forEach(d => {
+        html += `<tr><td>${d.date}</td><td>${d.moisture}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
 async function pollResult(requestId) {
+    const resultsDiv = document.getElementById('resultsPanel');
+    resultsDiv.classList.remove('hidden');
+    const statusSpan = document.getElementById('statusValue');
+    const moistureSpan = document.getElementById('moistureValue');
+    const submitBtn = document.getElementById('submitBtn');
+
     const interval = setInterval(async () => {
         try {
             const res = await fetch(`/api/results/${requestId}`);
-            if (res.status === 200) {
-                const data = await res.json();
-                document.getElementById('status').innerText = 'completed';
-                document.getElementById('moisture').innerText = data.mean_soil_moisture;
-                if (data.details) {
-                    console.log('Детали по дням:', data.details);
+            const data = await res.json();
+
+            if (res.status === 200 && data.status === 'completed') {
+                // Готово
+                statusSpan.innerText = '✅ Завершён';
+                moistureSpan.innerText = data.mean_soil_moisture;
+                if (data.details && data.details.length) {
+                    renderChart(data.details);
+                    renderTable(data.details);
                 }
                 clearInterval(interval);
-            } else if (res.status === 202) {
-                document.getElementById('status').innerText = 'processing...';
-            } else if (res.status === 404) {
-                // Результат не найден, возможно запрос ещё не начат или статус unknown
-                // Ничего не делаем, продолжаем опрос
-            } else if (res.status === 500) {
-                const err = await res.json();
-                document.getElementById('status').innerText = 'failed';
-                alert('Анализ завершился ошибкой: ' + (err.error || 'Unknown error'));
+                submitBtn.disabled = false;
+            }
+            else if (res.status === 202) {
+                // В обработке
+                statusSpan.innerText = '⏳ Обработка... (запрос данных SMAP)';
+                moistureSpan.innerText = '—';
+                if (chartInstance) chartInstance.destroy();
+                document.getElementById('detailsTable').innerHTML = '';
+            }
+            else if (res.status === 500) {
+                statusSpan.innerText = '❌ Ошибка анализа';
+                moistureSpan.innerText = '—';
                 clearInterval(interval);
+                submitBtn.disabled = false;
+            }
+            else {
+                // 404 или что-то ещё – продолжаем ждать
+                statusSpan.innerText = '⏳ Ожидание начала...';
             }
         } catch (err) {
-            console.error('Polling error:', err);
+            console.warn('poll error', err);
         }
     }, 3000);
 }
 
-window.onload = function() {
-    drawRectangle();
-    const today = new Date();
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(today.getDate() - 7);
-    document.getElementById('date_from').valueAsDate = sevenDaysAgo;
-    document.getElementById('date_to').valueAsDate = today;
+document.getElementById('analysisForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const geometry = document.getElementById('geometry').value;
+    if (!geometry) {
+        alert('Пожалуйста, нарисуйте область на карте (кнопка "Обновить область").');
+        return;
+    }
+
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.disabled = true;
+    submitBtn.innerText = '⏳ Отправка...';
+
+    const payload = {
+        name: document.getElementById('name').value || 'Анализ',
+        geometry: geometry,
+        date_from: document.getElementById('date_from').value,
+        date_to: document.getElementById('date_to').value
+    };
+
+    try {
+        const resp = await fetch('/api/submit_analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await resp.json();
+        if (resp.status === 202 || resp.ok) {
+            const requestId = result.id;
+            // показать панель и запустить опрос
+            document.getElementById('resultsPanel').classList.remove('hidden');
+            document.getElementById('statusValue').innerText = '🔄 Запуск...';
+            pollResult(requestId);
+        } else {
+            alert('Ошибка: ' + (result.error || 'неизвестная'));
+            submitBtn.disabled = false;
+            submitBtn.innerText = '🚀 Запустить анализ';
+        }
+    } catch (err) {
+        alert('Сетевая ошибка: ' + err.message);
+        submitBtn.disabled = false;
+        submitBtn.innerText = '🚀 Запустить анализ';
+    }
 };

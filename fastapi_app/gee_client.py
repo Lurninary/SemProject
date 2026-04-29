@@ -1,4 +1,3 @@
-import os
 import ee
 import geopandas as gpd
 from shapely import wkt

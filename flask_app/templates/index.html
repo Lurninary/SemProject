@@ -1,46 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Анализ влажности почвы</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Анализ влажности почвы | SMAP</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&display=swap">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon"> <!-- игнорируем favicon -->
 </head>
 <body>
-    <div class="container">
-        <h1>Анализ влажности почвы по спутниковым снимкам</h1>
+<div class="app-container">
+    <header>
+        <h1>🌱 Мониторинг влажности почвы</h1>
+        <p>Данные SMAP (NASA) – поверхностный слой 0–5 см</p>
+    </header>
 
-        <div class="layout">
-            <div class="map-container">
-                <div id="map"></div>
-                <button onclick="drawRectangle()">Нарисовать область</button>
-                <button onclick="clearDrawing()">Очистить</button>
+    <div class="main-grid">
+        <!-- Карта -->
+        <div class="card map-card">
+            <div id="map"></div>
+            <div class="map-controls">
+                <button class="btn btn-outline" onclick="drawRectangle()">📐 Обновить область</button>
+                <button class="btn btn-outline" onclick="clearDrawing()">🗑 Очистить</button>
             </div>
+            <div class="legend">
+                <span>📍 Выбранный участок <span style="color:#ff7800">(оранжевый прямоугольник)</span></span>
+            </div>
+        </div>
 
-            <div class="form-container">
-                <h3>Параметры анализа</h3>
-                <form id="analysisForm">
-                    <input type="text" id="name" placeholder="Название анализа" required>
-                    <textarea id="geometry" placeholder="Геометрия (WKT)" readonly required></textarea>
-                    <label for="date_from">Дата начала:</label>
-                    <input type="date" id="date_from" required>
-                    <label for="date_to">Дата окончания:</label>
-                    <input type="date" id="date_to" required>
-                    <button type="submit">Запустить анализ</button>
-                </form>
-
-                <div id="results" class="hidden">
-                    <h3>Результаты</h3>
-                    <p>Статус: <span id="status">-</span></p>
-                    <p>Влажность почвы: <span id="moisture">-</span>%</p>
-                    <img id="resultImage" src="" alt="Результат">
+        <!-- Форма + результаты -->
+        <div class="card form-card">
+            <h3>📝 Параметры анализа</h3>
+            <form id="analysisForm">
+                <div class="input-group">
+                    <label>Название (опционально)</label>
+                    <input type="text" id="name" placeholder="Например: Поле у реки">
                 </div>
+                <div class="input-group">
+                    <label>WKT геометрия (обновится автоматически)</label>
+                    <textarea id="geometry" readonly rows="3" placeholder="Нарисуйте область на карте"></textarea>
+                </div>
+                <div class="date-range">
+                    <div class="input-group">
+                        <label>Дата от</label>
+                        <input type="date" id="date_from" required>
+                    </div>
+                    <div class="input-group">
+                        <label>Дата до</label>
+                        <input type="date" id="date_to" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" id="submitBtn">🚀 Запустить анализ</button>
+            </form>
+
+            <!-- Блок результатов (изначально скрыт) -->
+            <div id="resultsPanel" class="results-panel hidden">
+                <h3>📊 Результаты</h3>
+                <div class="status-badge">
+                    <span id="statusLabel">Статус:</span>
+                    <span id="statusValue" class="status-badge-text">—</span>
+                </div>
+                <div class="moisture-value">
+                    Средняя влажность: <strong id="moistureValue">—</strong> %
+                </div>
+                <canvas id="moistureChart" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
+                <div id="detailsTable"></div>
             </div>
         </div>
     </div>
+</div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/terra-draw@0.1.1"></script>
-    <script src="/static/app.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>
