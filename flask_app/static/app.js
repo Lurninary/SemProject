@@ -7,7 +7,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 const gridLayer = L.layerGroup().addTo(map);
 let selectedGeometryLayer = null;
 let heatmapMap = null;
-let heatmapOverlayLayer = null;
+let smapRasterLayer = null;
 let heatmapGeometryLayer = null;
 const GRID_LEVELS = [
     { id: "coarse", minZoom: 0, maxZoom: 8, cellSizePx: 144, anchorZoom: 8 },
@@ -215,105 +215,33 @@ function pointInRing(lng, lat, ring) {
     return inside;
 }
 
-function computeSeriesVariability(details) {
-    if (!Array.isArray(details) || details.length < 2) return 0.2;
-    const values = details
-        .map((d) => Number(d.moisture))
-        .filter((v) => Number.isFinite(v));
-    if (values.length < 2) return 0.2;
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((acc, v) => acc + ((v - mean) ** 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    return Math.max(0.15, Math.min(0.55, std / 12));
-}
+async function fetchSmapRasterLayer(requestId) {
+    const res = await fetch(`/api/map/${requestId}`);
 
-function pseudoSpatialModulation(lat, lng, seed) {
-    const s1 = Math.sin((lat * 37.17) + seed);
-    const s2 = Math.cos((lng * 29.41) - seed * 0.7);
-    const s3 = Math.sin((lat + lng) * 11.3 + seed * 0.31);
-    return (s1 + s2 + s3) / 3; // ~[-1..1]
-}
-
-function sampleHeatPointsFromPolygonRing(ring, baseIntensity, variability, seed) {
-    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-    ring.forEach(([lng, lat]) => {
-        minLng = Math.min(minLng, lng);
-        minLat = Math.min(minLat, lat);
-        maxLng = Math.max(maxLng, lng);
-        maxLat = Math.max(maxLat, lat);
-    });
-
-    const spanLng = Math.max(0.0001, maxLng - minLng);
-    const spanLat = Math.max(0.0001, maxLat - minLat);
-    const step = Math.max(0.0012, Math.min(0.018, Math.max(spanLng, spanLat) / 22));
-
-    const points = [];
-    let guard = 0;
-    for (let lat = minLat; lat <= maxLat; lat += step) {
-        for (let lng = minLng; lng <= maxLng; lng += step) {
-            if (pointInRing(lng, lat, ring)) {
-                const modulation = pseudoSpatialModulation(lat, lng, seed);
-                const intensity = Math.max(
-                    0.05,
-                    Math.min(1.0, baseIntensity + modulation * variability)
-                );
-                points.push([lat, lng, intensity]);
-                guard += 1;
-                if (guard > 3500) return points;
-            }
-        }
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Failed to load SMAP map layer for request ${requestId}`);
     }
 
-    if (!points.length) {
-        const avgLng = ring.reduce((acc, p) => acc + p[0], 0) / ring.length;
-        const avgLat = ring.reduce((acc, p) => acc + p[1], 0) / ring.length;
-        points.push([avgLat, avgLng, baseIntensity]);
-    }
-
-    return points;
+    return res.json();
 }
 
-function sampleHeatPointsFromGeometry(geojson, meanMoisture, details) {
-    const intensity = Math.max(0.2, Math.min(1.0, (meanMoisture || 0) / 50));
-    const variability = computeSeriesVariability(details);
-    const pts = [];
-
-    if (!geojson) return pts;
-    if (geojson.type === "Polygon") {
-        pts.push(...sampleHeatPointsFromPolygonRing(geojson.coordinates[0], intensity, variability, 1));
-    } else if (geojson.type === "MultiPolygon") {
-        geojson.coordinates.forEach((poly, idx) => {
-            if (poly[0]) pts.push(...sampleHeatPointsFromPolygonRing(poly[0], intensity, variability, idx + 1));
-        });
-    }
-
-    return pts;
-}
-
-function renderHeatmapForGeometry(geojson, meanMoisture, titleText, details = []) {
+function renderRealSmapMapForGeometry(geojson, tilePayload, titleText) {
     initHeatmapMapIfNeeded();
 
-    if (heatmapOverlayLayer) {
-        heatmapMap.removeLayer(heatmapOverlayLayer);
-        heatmapOverlayLayer = null;
+    if (smapRasterLayer) {
+        heatmapMap.removeLayer(smapRasterLayer);
+        smapRasterLayer = null;
     }
+
     if (heatmapGeometryLayer) {
         heatmapMap.removeLayer(heatmapGeometryLayer);
         heatmapGeometryLayer = null;
     }
 
-    const heatPoints = sampleHeatPointsFromGeometry(geojson, meanMoisture, details);
-    heatmapOverlayLayer = L.heatLayer(heatPoints, {
-        radius: 18,
-        blur: 14,
-        maxZoom: 17,
-        minOpacity: 0.25,
-        gradient: {
-            0.2: "#2a6fdb",
-            0.45: "#2db84d",
-            0.7: "#f4b400",
-            1.0: "#d93025"
-        }
+    smapRasterLayer = L.tileLayer(tilePayload.tile_url, {
+        opacity: 0.72,
+        attribution: "SMAP L4 / Google Earth Engine"
     }).addTo(heatmapMap);
 
     heatmapGeometryLayer = L.geoJSON(geojson, {
@@ -324,8 +252,13 @@ function renderHeatmapForGeometry(geojson, meanMoisture, titleText, details = []
         }
     }).addTo(heatmapMap);
 
-    heatmapMap.fitBounds(heatmapGeometryLayer.getBounds(), { padding: [20, 20], maxZoom: 15 });
-    document.getElementById("heatmapMeta").innerText = titleText || "Тепловая карта влажности";
+    heatmapMap.fitBounds(
+        heatmapGeometryLayer.getBounds(),
+        { padding: [20, 20], maxZoom: 5 }
+    );
+
+    document.getElementById("heatmapMeta").innerText =
+        `${titleText || "Карта влажности SMAP"} · период: ${tilePayload.date_from} — ${tilePayload.date_to} · шкала: ${tilePayload.min}–${tilePayload.max} ${tilePayload.units}`;
 }
 
 // --- Управление формой ---
@@ -418,11 +351,12 @@ async function pollResult(requestId) {
                 try {
                     const geomPayload = await fetchRequestGeometry(requestId);
                     setMainMapGeometryHighlight(geomPayload.geometry, false);
-                    renderHeatmapForGeometry(
+                    const tilePayload = await fetchSmapRasterLayer(requestId);
+
+                    renderRealSmapMapForGeometry(
                         geomPayload.geometry,
-                        data.mean_soil_moisture,
-                        `Анализ #${requestId}: ${geomPayload.name || "без названия"}`,
-                        data.details || []
+                        tilePayload,
+                        `Анализ #${requestId}: ${geomPayload.name || "без названия"}`
                     );
                 } catch (e) {
                     console.warn("failed to render heatmap for analysis", e);
@@ -603,12 +537,17 @@ async function pollHistoryResult(requestId) {
                     renderTable(data.details, 'detailsTableHistory');
                 }
                 if (currentHistoryGeometry) {
-                    renderHeatmapForGeometry(
-                        currentHistoryGeometry.geometry,
-                        data.mean_soil_moisture,
-                        `История #${requestId}: ${currentHistoryGeometry.name || "без названия"}`,
-                        data.details || []
-                    );
+                    try {
+                        const tilePayload = await fetchSmapRasterLayer(requestId);
+
+                        renderRealSmapMapForGeometry(
+                            currentHistoryGeometry.geometry,
+                            tilePayload,
+                            `История #${requestId}: ${currentHistoryGeometry.name || "без названия"}`
+                        );
+                    } catch (e) {
+                        console.warn("failed to render real SMAP map for history item", e);
+                    }
                 }
                 clearInterval(historyPollInterval);
                 historyPollInterval = null;

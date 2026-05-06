@@ -101,6 +101,55 @@ async def get_results(request_id: int):
         db.close()
 
 
+@app.get("/api/map/{request_id}")
+async def get_smap_map_layer(request_id: int):
+    """
+    Возвращает URL реального растрового слоя SMAP для Leaflet.
+
+    Слой строится на стороне Google Earth Engine
+    как среднее значение sm_surface за период анализа.
+    """
+    db = SessionLocal()
+    try:
+        request_row = (
+            db.query(
+                AnalysisRequestModel.id,
+                AnalysisRequestModel.date_from,
+                AnalysisRequestModel.date_to,
+                AnalysisRequestModel.status,
+                func.ST_AsText(cast(AnalysisRequestModel.geometry, Geometry)).label("geometry_wkt")
+            )
+            .filter(AnalysisRequestModel.id == request_id)
+            .first()
+        )
+
+        if not request_row:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        if request_row.status != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Analysis is not completed yet. Current status: {request_row.status}"
+            )
+
+        loop = asyncio.get_running_loop()
+
+        tile_payload = await loop.run_in_executor(
+            None,
+            gee_client.get_smap_period_tile_url,
+            request_row.geometry_wkt,
+            request_row.date_from.isoformat(),
+            request_row.date_to.isoformat()
+        )
+
+        return {
+            "request_id": request_id,
+            **tile_payload
+        }
+
+    finally:
+        db.close()
+
 @app.get("/api/historical/{lat}/{lon}")
 async def get_historical_data(lat: float, lon: float, months: int = 12):
     if months < 1 or months > 60:
