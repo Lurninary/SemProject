@@ -120,7 +120,7 @@ header p {
     margin-bottom: 6px;
 }
 
-input, textarea {
+input, textarea, select {{
     width: 100%;
     padding: 10px 14px;
     border: 1.5px solid #cfdfcf;
@@ -131,7 +131,7 @@ input, textarea {
     transition: 0.2s;
 }
 
-input:focus, textarea:focus {
+input:focus, textarea:focus, select:focus {
     outline: none;
     border-color: #4c9a2a;
     box-shadow: 0 0 0 3px rgba(76,154,42,0.2);
@@ -350,4 +350,47 @@ table.detail-table td, table.detail-table th {
     padding: 6px 4px;
     border-bottom: 1px solid #cde2cd;
     text-align: center;
+}
+
+.map-legend {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border: 1px solid #d6e4d2;
+    border-radius: 18px;
+    background: #f9fcf7;
+}
+
+.map-legend-title {
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #223322;
+}
+
+.map-legend-subtitle {
+    font-size: 0.85rem;
+    color: #466046;
+    margin-bottom: 10px;
+}
+
+.map-legend-gradient {
+    width: 100%;
+    height: 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(0,0,0,0.08);
+    margin-bottom: 8px;
+}
+
+.map-legend-scale {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    color: #334a33;
+}
+
+.map-legend-note {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    color: #5a705a;
+    line-height: 1.35;
 }

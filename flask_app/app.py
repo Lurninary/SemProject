@@ -26,11 +26,18 @@ def submit_analysis():
     """Принимает данные с формы, создает запрос в БД и отправляет задачу в FastAPI."""
     try:
         data = request.json
+        analysis_parameter = data.get('analysis_parameter', 'smap_soil_moisture')
+
+        allowed_parameters = {'smap_soil_moisture', 's2_ndmi'}
+        if analysis_parameter not in allowed_parameters:
+            return jsonify({"error": "Unknown analysis parameter"}), 400
+
         new_request = AnalysisRequest(
             name=data.get('name', 'Unnamed Request'),
             geometry=data.get('geometry'),
             date_from=datetime.strptime(data.get('date_from'), '%Y-%m-%d').date(),
-            date_to=datetime.strptime(data.get('date_to'), '%Y-%m-%d').date()
+            date_to=datetime.strptime(data.get('date_to'), '%Y-%m-%d').date(),
+            analysis_parameter=analysis_parameter
         )
         db.session.add(new_request)
         db.session.commit()
@@ -39,7 +46,8 @@ def submit_analysis():
             "request_id": new_request.id,
             "geometry": data['geometry'],
             "date_from": data['date_from'],
-            "date_to": data['date_to']
+            "date_to": data['date_to'],
+            "analysis_parameter": analysis_parameter
         }
         fastapi_resp = requests.post(f"{FASTAPI_URL}/api/process", json=payload)
         if fastapi_resp.status_code != 200:
@@ -89,6 +97,7 @@ def list_requests():
         "id": r.id,
         "name": r.name,
         "status": r.status,
+        "analysis_parameter": r.analysis_parameter,
         "created_at": str(r.created_at)
     } for r in requests_list])
 

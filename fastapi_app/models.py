@@ -12,6 +12,7 @@ class AnalysisRequestModel(Base):
     geometry = Column(Geography(geometry_type="GEOMETRY", srid=4326))
     date_from = Column(Date)
     date_to = Column(Date)
+    analysis_parameter = Column(String(50), default="smap_soil_moisture")
     created_at = Column(DateTime, server_default=func.now())
     status = Column(String(50), default="pending")
 
@@ -23,6 +24,7 @@ class AnalysisResultModel(Base):
     request_id = Column(Integer, ForeignKey("analysis_requests.id"))
     acquisition_date = Column(Date)
     mean_ndwi = Column(Float)
+    mean_ndmi = Column(Float)
     mean_soil_moisture = Column(Float)
     image_url = Column(Text)
     processed_at = Column(DateTime, server_default=func.now())

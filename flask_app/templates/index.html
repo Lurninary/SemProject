@@ -44,6 +44,17 @@
                         <input type="text" id="name" placeholder="Например: Поле у реки">
                     </div>
                     <div class="input-group">
+                        <label>Параметр анализа</label>
+                        <select id="analysis_parameter" required>
+                            <option value="smap_soil_moisture">
+                                Влажность почвы SMAP, %
+                            </option>
+                            <option value="s2_ndmi">
+                                Индекс влагообеспеченности NDMI Sentinel-2
+                            </option>
+                        </select>
+                    </div>
+                    <div class="input-group">
                         <label>WKT геометрия (обновится автоматически)</label>
                         <textarea id="geometry" readonly rows="3" placeholder="Нарисуйте область на карте"></textarea>
                     </div>
@@ -68,7 +79,7 @@
                         <span id="statusValue" class="status-badge-text">—</span>
                     </div>
                     <div class="moisture-value">
-                        Средняя влажность: <strong id="moistureValue">—</strong> %
+                        Средняя влажность: <strong id="moistureValue">—</strong>
                     </div>
                     <canvas id="moistureChart" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
                     <div id="detailsTable"></div>
@@ -99,7 +110,7 @@
                         <span id="historyStatusValue" class="status-badge-text">—</span>
                     </div>
                     <div class="moisture-value">
-                        Средняя влажность: <strong id="historyMoistureValue">—</strong> %
+                        Средняя влажность: <strong id="historyMoistureValue">—</strong>
                     </div>
                     <div id="historyError" class="error-text hidden"></div>
                     <canvas id="moistureChartHistory" width="400" height="200" style="max-width:100%; height:auto;"></canvas>
@@ -111,9 +122,21 @@
 </div>
 
 <div id="heatmapSection" class="card heatmap-card hidden">
-    <h3>🛰 Карта влажности почвы SMAP</h3>
+    <h3>🛰 Детальная карта влагообеспеченности</h3>
     <div id="heatmapMeta" class="muted"></div>
     <div id="heatmapMap"></div>
+
+    <div id="mapLegend" class="map-legend hidden">
+        <div class="map-legend-title">Легенда</div>
+        <div id="mapLegendSubtitle" class="map-legend-subtitle"></div>
+        <div id="mapLegendGradient" class="map-legend-gradient"></div>
+        <div class="map-legend-scale">
+            <span id="mapLegendMin">0</span>
+            <span id="mapLegendMid"></span>
+            <span id="mapLegendMax">100</span>
+        </div>
+        <div id="mapLegendNote" class="map-legend-note"></div>
+    </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

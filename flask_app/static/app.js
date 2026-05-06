@@ -215,18 +215,18 @@ function pointInRing(lng, lat, ring) {
     return inside;
 }
 
-async function fetchSmapRasterLayer(requestId) {
-    const res = await fetch(`/api/map/${requestId}`);
+async function fetchRasterLayer(requestId, layer = "s2_ndmi") {
+    const res = await fetch(`/api/map/${requestId}?layer=${encodeURIComponent(layer)}`);
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `Failed to load SMAP map layer for request ${requestId}`);
+        throw new Error(err.detail || `Failed to load map layer for request ${requestId}`);
     }
 
     return res.json();
 }
 
-function renderRealSmapMapForGeometry(geojson, tilePayload, titleText) {
+function renderRasterMapForGeometry(geojson, tilePayload, titleText) {
     initHeatmapMapIfNeeded();
 
     if (smapRasterLayer) {
@@ -240,8 +240,10 @@ function renderRealSmapMapForGeometry(geojson, tilePayload, titleText) {
     }
 
     smapRasterLayer = L.tileLayer(tilePayload.tile_url, {
-        opacity: 0.72,
-        attribution: "SMAP L4 / Google Earth Engine"
+        opacity: 0.78,
+        attribution: tilePayload.layer_type === "sentinel2_ndmi"
+            ? "Sentinel-2 / Google Earth Engine"
+            : "SMAP L4 / Google Earth Engine"
     }).addTo(heatmapMap);
 
     heatmapGeometryLayer = L.geoJSON(geojson, {
@@ -254,11 +256,81 @@ function renderRealSmapMapForGeometry(geojson, tilePayload, titleText) {
 
     heatmapMap.fitBounds(
         heatmapGeometryLayer.getBounds(),
-        { padding: [20, 20], maxZoom: 5 }
+        {
+            padding: [20, 20],
+            maxZoom: tilePayload.layer_type === "sentinel2_ndmi" ? 15 : 10
+        }
     );
 
+    const layerName = tilePayload.layer_type === "sentinel2_ndmi"
+        ? "Детальная карта NDMI Sentinel-2"
+        : "Карта влажности SMAP";
+
+    const description = tilePayload.description
+        ? ` · ${tilePayload.description}`
+        : "";
+
     document.getElementById("heatmapMeta").innerText =
-        `${titleText || "Карта влажности SMAP"} · период: ${tilePayload.date_from} — ${tilePayload.date_to} · шкала: ${tilePayload.min}–${tilePayload.max} ${tilePayload.units}`;
+        `${titleText || layerName} · ${layerName} · период: ${tilePayload.date_from} — ${tilePayload.date_to} · шкала: ${tilePayload.min}…${tilePayload.max} ${tilePayload.units}${description}`;
+
+    renderMapLegend(tilePayload);
+}
+
+function buildGradientCss(palette) {
+    if (!Array.isArray(palette) || !palette.length) {
+        return "linear-gradient(to right, #cccccc, #666666)";
+    }
+
+    const stops = palette.map((color, index) => {
+        const percent = (index / (palette.length - 1)) * 100;
+        return `#${color} ${percent}%`;
+    });
+
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+function renderMapLegend(tilePayload) {
+    const legend = document.getElementById("mapLegend");
+    const subtitle = document.getElementById("mapLegendSubtitle");
+    const gradient = document.getElementById("mapLegendGradient");
+    const minEl = document.getElementById("mapLegendMin");
+    const midEl = document.getElementById("mapLegendMid");
+    const maxEl = document.getElementById("mapLegendMax");
+    const noteEl = document.getElementById("mapLegendNote");
+
+    if (!legend || !subtitle || !gradient || !minEl || !midEl || !maxEl || !noteEl) {
+        return;
+    }
+
+    legend.classList.remove("hidden");
+
+    const minVal = tilePayload.min;
+    const maxVal = tilePayload.max;
+    const midVal = ((minVal + maxVal) / 2).toFixed(2);
+
+    gradient.style.background = buildGradientCss(tilePayload.palette || []);
+
+    subtitle.innerText = tilePayload.legend_title || "Легенда карты";
+    minEl.innerText = `${minVal}`;
+    midEl.innerText = `${midVal}`;
+    maxEl.innerText = `${maxVal}`;
+
+    if (tilePayload.layer_type === "sentinel2_ndmi") {
+        noteEl.innerText =
+            "Слева — более сухие/слабее увлажнённые поверхности, справа — более влажные/влагообеспеченные. NDMI является индексом и не равен влажности почвы в процентах.";
+    } else if (tilePayload.layer_type === "smap") {
+        noteEl.innerText =
+            "Слева — меньшая влажность почвы, справа — большая влажность почвы. Значения показаны в процентах по данным SMAP.";
+    } else {
+        noteEl.innerText = "";
+    }
+}
+
+function clearMapLegend() {
+    const legend = document.getElementById("mapLegend");
+    if (legend) {
+        legend.classList.add("hidden");
+    }
 }
 
 // --- Управление формой ---
@@ -279,17 +351,20 @@ let historyLoaded = false;
 let historyData = [];
 let currentHistoryGeometry = null;
 
-function renderChart(details, canvasId, existingChartInstance) {
+function renderChart(details, canvasId, existingChartInstance, parameterLabel = 'Параметр', units = '') {
     const ctx = document.getElementById(canvasId).getContext('2d');
+
     if (existingChartInstance) existingChartInstance.destroy();
-    const labels = details.map(d => d.date.slice(5)); // MM-DD
-    const values = details.map(d => d.moisture);
+
+    const labels = details.map(d => d.date.slice(5));
+    const values = details.map(d => d.value ?? d.moisture);
+
     const newChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
             datasets: [{
-                label: 'Влажность почвы (%)',
+                label: `${parameterLabel}${units ? ` (${units})` : ''}`,
                 data: values,
                 borderColor: '#3c8c3c',
                 backgroundColor: 'rgba(76,154,42,0.1)',
@@ -304,26 +379,48 @@ function renderChart(details, canvasId, existingChartInstance) {
             maintainAspectRatio: true,
             plugins: {
                 legend: { position: 'top' },
-                tooltip: { callbacks: { label: (ctx) => `${ctx.raw}%` } }
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.raw}${units ? ` ${units}` : ''}`
+                    }
+                }
             },
             scales: {
-                y: { title: { display: true, text: 'Влажность (%)' }, min: 0, max: 50 }
+                y: {
+                    title: {
+                        display: true,
+                        text: `${parameterLabel}${units ? ` (${units})` : ''}`
+                    }
+                }
             }
         }
     });
+
     return newChart;
 }
 
-function renderTable(details, containerId) {
+function renderTable(details, containerId, parameterLabel = 'Значение', units = '') {
     const container = document.getElementById(containerId);
+
     if (!details.length) {
         container.innerHTML = '<p>Нет детальных данных</p>';
         return;
     }
-    let html = '<table class="detail-table"><thead><tr><th>Дата</th><th>Влажность (%)</th></tr></thead><tbody>';
+
+    let html = `<table class="detail-table">
+        <thead>
+            <tr>
+                <th>Дата</th>
+                <th>${parameterLabel}${units ? `, ${units}` : ''}</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
     details.forEach(d => {
-        html += `<tr><td>${d.date}</td><td>${d.moisture}</td></tr>`;
+        const value = d.value ?? d.moisture;
+        html += `<tr><td>${d.date}</td><td>${value}</td></tr>`;
     });
+
     html += '</tbody></table>';
     container.innerHTML = html;
 }
@@ -351,9 +448,9 @@ async function pollResult(requestId) {
                 try {
                     const geomPayload = await fetchRequestGeometry(requestId);
                     setMainMapGeometryHighlight(geomPayload.geometry, false);
-                    const tilePayload = await fetchSmapRasterLayer(requestId);
+                    const tilePayload = await fetchRasterLayer(requestId, "s2_ndmi");
 
-                    renderRealSmapMapForGeometry(
+                    renderRasterMapForGeometry(
                         geomPayload.geometry,
                         tilePayload,
                         `Анализ #${requestId}: ${geomPayload.name || "без названия"}`
@@ -404,7 +501,8 @@ document.getElementById('analysisForm').onsubmit = async (e) => {
         name: document.getElementById('name').value || 'Анализ',
         geometry: geometry,
         date_from: document.getElementById('date_from').value,
-        date_to: document.getElementById('date_to').value
+        date_to: document.getElementById('date_to').value,
+        analysis_parameter: document.getElementById('analysis_parameter').value
     };
 
     try {
@@ -476,11 +574,14 @@ async function loadHistory() {
             const badge = status === 'completed'
                 ? '✅'
                 : (status === 'failed' ? '❌' : '⏳');
+            const parameterLabel = r.analysis_parameter === "s2_ndmi"
+                ? "NDMI Sentinel-2"
+                : "Влажность SMAP";
             return `
                 <div class="history-item" role="button" tabindex="0" onclick="selectHistory(${r.id})">
                     <div class="history-item-left">
                         <div class="history-title">${r.name || 'Без названия'}</div>
-                        <div class="history-subtitle">ID: ${r.id} • ${r.created_at}</div>
+                        <div class="history-subtitle">ID: ${r.id} • ${parameterLabel} • ${r.created_at}</div>
                     </div>
                     <div class="history-badge">${badge}</div>
                 </div>
@@ -538,15 +639,16 @@ async function pollHistoryResult(requestId) {
                 }
                 if (currentHistoryGeometry) {
                     try {
-                        const tilePayload = await fetchSmapRasterLayer(requestId);
+                        const tilePayload = await fetchRasterLayer(requestId, "s2_ndmi");
 
-                        renderRealSmapMapForGeometry(
+                        renderRasterMapForGeometry(
                             currentHistoryGeometry.geometry,
                             tilePayload,
                             `История #${requestId}: ${currentHistoryGeometry.name || "без названия"}`
                         );
                     } catch (e) {
                         console.warn("failed to render real SMAP map for history item", e);
+                        clearMapLegend();
                     }
                 }
                 clearInterval(historyPollInterval);

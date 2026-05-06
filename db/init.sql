@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS analysis_requests (
     geometry GEOGRAPHY(GEOMETRY, 4326),
     date_from DATE,
     date_to DATE,
+    analysis_parameter VARCHAR(50) DEFAULT 'smap_soil_moisture',
     created_at TIMESTAMP DEFAULT NOW(),
     status VARCHAR(50) DEFAULT 'pending'
 );
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     request_id INTEGER REFERENCES analysis_requests(id) ON DELETE CASCADE,
     acquisition_date DATE,
     mean_ndwi FLOAT,
+    mean_ndmi FLOAT,
     mean_soil_moisture FLOAT,
     image_url TEXT,
     processed_at TIMESTAMP DEFAULT NOW()

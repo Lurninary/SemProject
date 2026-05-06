@@ -23,6 +23,7 @@ class AnalysisRequest(BaseModel):
     geometry: str
     date_from: str
     date_to: str
+    analysis_parameter: str = "smap_soil_moisture"
 
 
 class AnalysisResult(BaseModel):
@@ -68,46 +69,80 @@ async def get_results(request_id: int):
         if not request_row:
             raise HTTPException(status_code=404, detail="Request not found")
 
+        parameter = request_row.analysis_parameter or "smap_soil_moisture"
+
+        if parameter == "smap_soil_moisture":
+            value_column = AnalysisResultModel.mean_soil_moisture
+            parameter_label = "Влажность почвы SMAP"
+            units = "%"
+        elif parameter == "s2_ndmi":
+            value_column = AnalysisResultModel.mean_ndmi
+            parameter_label = "Индекс NDMI Sentinel-2"
+            units = "NDMI"
+        else:
+            raise HTTPException(status_code=500, detail="Unknown analysis parameter in database")
+
         rows = (
             db.query(
                 AnalysisResultModel.acquisition_date,
-                AnalysisResultModel.mean_soil_moisture
+                value_column.label("value")
             )
             .filter(AnalysisResultModel.request_id == request_id)
+            .filter(value_column.isnot(None))
             .order_by(AnalysisResultModel.acquisition_date)
             .all()
         )
+
         if not rows:
             status = request_row.status
+
             if status in {"pending", "processing"}:
                 return JSONResponse(
                     status_code=202,
-                    content={"request_id": request_id, "status": "processing"}
+                    content={
+                        "request_id": request_id,
+                        "status": "processing",
+                        "analysis_parameter": parameter
+                    }
                 )
+
             if status == "failed":
                 raise HTTPException(status_code=500, detail="Analysis failed")
-            # Defensive: sometimes request may be marked completed while no valid records were produced.
+
             if status == "completed":
                 raise HTTPException(status_code=500, detail="Analysis completed but no valid records were found")
+
             raise HTTPException(status_code=404, detail="Results not found")
-        avg_moisture = sum(r.mean_soil_moisture for r in rows) / len(rows)
+
+        avg_value = sum(float(r.value) for r in rows) / len(rows)
+
         return {
             "request_id": request_id,
-            "mean_soil_moisture": round(avg_moisture, 2),
             "status": "completed",
-            "details": [{"date": r.acquisition_date, "moisture": r.mean_soil_moisture} for r in rows]
+            "analysis_parameter": parameter,
+            "parameter_label": parameter_label,
+            "units": units,
+            "mean_value": round(avg_value, 2 if parameter == "smap_soil_moisture" else 4),
+            "details": [
+                {
+                    "date": r.acquisition_date.isoformat(),
+                    "value": round(float(r.value), 2 if parameter == "smap_soil_moisture" else 4)
+                }
+                for r in rows
+            ]
         }
+
     finally:
         db.close()
 
 
 @app.get("/api/map/{request_id}")
-async def get_smap_map_layer(request_id: int):
+async def get_map_layer(request_id: int, layer: str = "s2_ndmi"):
     """
-    Возвращает URL реального растрового слоя SMAP для Leaflet.
+    Возвращает URL растрового слоя для Leaflet.
 
-    Слой строится на стороне Google Earth Engine
-    как среднее значение sm_surface за период анализа.
+    layer=smap     — грубая, но количественная карта SMAP.
+    layer=s2_ndmi  — детальная карта Sentinel-2 NDMI.
     """
     db = SessionLocal()
     try:
@@ -134,18 +169,35 @@ async def get_smap_map_layer(request_id: int):
 
         loop = asyncio.get_running_loop()
 
-        tile_payload = await loop.run_in_executor(
-            None,
-            gee_client.get_smap_period_tile_url,
-            request_row.geometry_wkt,
-            request_row.date_from.isoformat(),
-            request_row.date_to.isoformat()
-        )
+        if layer == "smap":
+            tile_payload = await loop.run_in_executor(
+                None,
+                gee_client.get_smap_period_tile_url,
+                request_row.geometry_wkt,
+                request_row.date_from.isoformat(),
+                request_row.date_to.isoformat()
+            )
+        elif layer == "s2_ndmi":
+            tile_payload = await loop.run_in_executor(
+                None,
+                gee_client.get_sentinel2_ndmi_tile_url,
+                request_row.geometry_wkt,
+                request_row.date_from.isoformat(),
+                request_row.date_to.isoformat()
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Unknown layer. Use layer=smap or layer=s2_ndmi"
+            )
 
         return {
             "request_id": request_id,
             **tile_payload
         }
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
     finally:
         db.close()
@@ -236,13 +288,24 @@ async def perform_analysis(request: AnalysisRequest):
 
     try:
         loop = asyncio.get_event_loop()
-        smap_data = await loop.run_in_executor(
-            None,
-            gee_client.get_smap_daily,
-            request.geometry,
-            request.date_from,
-            request.date_to
-        )
+        if request.analysis_parameter == "smap_soil_moisture":
+            analysis_data = await loop.run_in_executor(
+                None,
+                gee_client.get_smap_daily,
+                request.geometry,
+                request.date_from,
+                request.date_to
+            )
+        elif request.analysis_parameter == "s2_ndmi":
+            analysis_data = await loop.run_in_executor(
+                None,
+                gee_client.get_sentinel2_ndmi_daily,
+                request.geometry,
+                request.date_from,
+                request.date_to
+            )
+        else:
+            raise ValueError(f"Unknown analysis parameter: {request.analysis_parameter}")
     except Exception as e:
         print(f"[Background] GEE error: {e}")
         db = SessionLocal()
@@ -255,7 +318,7 @@ async def perform_analysis(request: AnalysisRequest):
             db.close()
         return
 
-    if not smap_data:
+    if not analysis_data:
         print(f"[Background] GEE returned no valid records for request {request.request_id}")
         db = SessionLocal()
         try:
@@ -269,22 +332,34 @@ async def perform_analysis(request: AnalysisRequest):
 
     db = SessionLocal()
     try:
-        for item in smap_data:
-            db.add(
-                AnalysisResultModel(
-                    request_id=request.request_id,
-                    acquisition_date=item["date"],
-                    mean_soil_moisture=item["soil_moisture"],
-                    image_url=None
+        for item in analysis_data:
+            if request.analysis_parameter == "smap_soil_moisture":
+                db.add(
+                    AnalysisResultModel(
+                        request_id=request.request_id,
+                        acquisition_date=item["date"],
+                        mean_soil_moisture=item["soil_moisture"],
+                        mean_ndmi=None,
+                        image_url=None
+                    )
                 )
-            )
+            elif request.analysis_parameter == "s2_ndmi":
+                db.add(
+                    AnalysisResultModel(
+                        request_id=request.request_id,
+                        acquisition_date=item["date"],
+                        mean_soil_moisture=None,
+                        mean_ndmi=item["ndmi"],
+                        image_url=None
+                    )
+                )
 
         req = db.query(AnalysisRequestModel).filter(AnalysisRequestModel.id == request.request_id).first()
         if req:
             req.status = "completed"
 
         db.commit()
-        print(f"[Background] Completed for request {request.request_id}, {len(smap_data)} records saved.")
+        print(f"[Background] Completed for request {request.request_id}, {len(analysis_data)} records saved.")
     except SQLAlchemyError as e:
         db.rollback()
         print(f"[Background] DB error: {e}")
